@@ -12,7 +12,6 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 RSS_FEED_URL = "https://www.sport-express.ru/services/materials/news/football/se/"
 KEYWORDS = ["родин", "rodina"]
 
-# ВАЖНО: имя файла изменено, чтобы старый «грязный» кэш не подхватился
 STATE_FILE = "sent_news_v2.json"
 
 
@@ -32,7 +31,6 @@ def save_sent_links(links):
 
 
 def fetch_news():
-    """Скачивает и разбирает RSS-ленту «Спорт-Экспресс»."""
     feed = feedparser.parse(RSS_FEED_URL)
     if feed.bozo and not feed.entries:
         print(f"Ошибка при чтении RSS: {feed.bozo_exception}")
@@ -49,7 +47,6 @@ def fetch_news():
 
 
 def filter_news(items, sent_links):
-    """Фильтрует по ключевым словам и по списку уже отправленных ссылок."""
     result = []
     for item in items:
         haystack = (item["title"] + " " + item["summary"]).lower()
@@ -60,34 +57,54 @@ def filter_news(items, sent_links):
 
 async def send_to_telegram(items):
     """
-    Отправляет новости в Telegram.
+    Отправляет новости в Telegram с повторами при сетевых сбоях.
     Возвращает список ссылок, которые РЕАЛЬНО ушли в чат.
-    Если отправка новости упала — её ссылка в результат не попадёт,
-    и при следующем запуске бот попробует снова.
     """
     if not items:
         print("Новых новостей не найдено.")
         return []
 
     sent = []
-    bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
-    async with bot:
+    bot = telegram.Bot(
+        token=TELEGRAM_BOT_TOKEN,
+        read_timeout=30,
+        write_timeout=30,
+        connect_timeout=30,
+        pool_timeout=30,
+    )
+    try:
         for item in items:
             message = (
                 f"📰 Новость о «Родине»\n\n"
                 f"{item['title']}\n\n"
                 f"{item['link']}"
             )
-            try:
-                await bot.send_message(
-                    chat_id=TELEGRAM_CHAT_ID,
-                    text=message,
-                    disable_web_page_preview=False,
-                )
-                print(f"Отправлено: {item['title']}")
-                sent.append(item["link"])
-            except TelegramError as e:
-                print(f"Ошибка Telegram: {e}")
+            delivered = False
+            for attempt in range(3):
+                try:
+                    await bot.send_message(
+                        chat_id=TELEGRAM_CHAT_ID,
+                        text=message,
+                        disable_web_page_preview=False,
+                    )
+                    print(f"Отправлено: {item['title']}")
+                    sent.append(item["link"])
+                    delivered = True
+                    break
+                except telegram.error.NetworkError as e:
+                    print(f"Сетевая ошибка (попытка {attempt + 1}/3): {e}")
+                    if attempt < 2:
+                        await asyncio.sleep(5)
+                except TelegramError as e:
+                    print(f"Ошибка Telegram: {e}")
+                    break
+            if not delivered:
+                print(f"Не удалось отправить: {item['title']}")
+    finally:
+        try:
+            await bot.shutdown()
+        except Exception as e:
+            print(f"Ошибка при закрытии соединения: {e}")
     return sent
 
 
@@ -102,7 +119,6 @@ def main():
     fresh = filter_news(all_news, sent_links)
     print(f"Подходящих новых: {len(fresh)}")
 
-    # Запоминаем ТОЛЬКО реально отправленные ссылки
     successfully_sent = asyncio.run(send_to_telegram(fresh))
 
     sent_links.update(successfully_sent)
