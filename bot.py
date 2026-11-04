@@ -16,10 +16,10 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 RSS_FEED_URL = "https://www.sport-express.ru/services/materials/news/football/se/"
 # ВАЖНО: Верните "родин", когда закончите тестировать картинки! "rodina"
-KEYWORDS = ["футбол",] 
+KEYWORDS = ["родин",] 
 
 # ВАЖНО: Верните "sent_news_v2.json", когда закончите тестировать!
-STATE_FILE = "sent_news_v4.json"
+STATE_FILE = "sent_news_v2.json"
 
 
 def load_sent_links():
