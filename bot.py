@@ -15,10 +15,11 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 RSS_FEED_URL = "https://www.sport-express.ru/services/materials/news/football/se/"
-# ВАЖНО: не забудьте вернуть сюда "родин", если меняли на "футбол" для теста!
-KEYWORDS = ["футбол",]
-#["родин", "rodina"]
-STATE_FILE = "sent_news_v3.json" # тут поменять с v3 на v2
+# ВАЖНО: Верните "родин", когда закончите тестировать картинки! "rodina"
+KEYWORDS = ["футбол",] 
+
+# ВАЖНО: Верните "sent_news_v2.json", когда закончите тестировать!
+STATE_FILE = "sent_news_v4.json"
 
 
 def load_sent_links():
@@ -37,7 +38,6 @@ def save_sent_links(links):
 
 
 def get_og_image(url):
-    """Скачивает страницу новости и ищет картинку в мета-теге og:image."""
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         resp = requests.get(url, headers=headers, timeout=10)
@@ -54,7 +54,6 @@ def get_og_image(url):
 def fetch_news():
     feed = feedparser.parse(RSS_FEED_URL)
     if feed.bozo and not feed.entries:
-        print(f"Ошибка при чтении RSS: {feed.bozo_exception}")
         return []
 
     items = []
@@ -105,28 +104,24 @@ async def send_to_telegram(items):
 
     try:
         for item in items:
-            # Если в RSS картинки не было — идем за ней на сайт
             if not item["image_url"]:
-                print(f"Картинка в RSS не найдена, ищем на сайте: {item['link']}")
                 item["image_url"] = get_og_image(item["link"])
 
             safe_title = html.escape(item["title"])
-            safe_link = html.escape(item["link"])
             
-            # Ограничиваем длину текста (лимит подписи к фото — 1024 символа)
             short_text = item["text"][:800] + "..." if len(item["text"]) > 800 else item["text"]
             safe_text = html.escape(short_text)
 
+            # ФОРМИРУЕМ ПОДПИСЬ БЕЗ ССЫЛКИ В КОНЦЕ
             caption = (
                 f"<b>{safe_title}</b>\n\n"
-                f"{safe_text}\n\n"
+                f"{safe_text}"
             )
 
             delivered = False
             for attempt in range(3):
                 try:
                     if item["image_url"]:
-                        # Отправляем как ФОТО с подписью
                         await bot.send_photo(
                             chat_id=TELEGRAM_CHAT_ID,
                             photo=item["image_url"],
@@ -134,8 +129,6 @@ async def send_to_telegram(items):
                             parse_mode=ParseMode.HTML,
                         )
                     else:
-                        # Если картинки вообще нигде нет, отправляем текст
-                        # disable_web_page_preview=True скроет тот самый серый блок
                         await bot.send_message(
                             chat_id=TELEGRAM_CHAT_ID,
                             text=caption,
@@ -161,8 +154,8 @@ async def send_to_telegram(items):
     finally:
         try:
             await bot.shutdown()
-        except Exception as e:
-            print(f"Ошибка при закрытии соединения: {e}")
+        except Exception:
+            pass
     return sent
 
 
