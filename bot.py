@@ -2,6 +2,7 @@ import os
 import json
 import feedparser
 import telegram
+from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
 # --- КОНФИГУРАЦИЯ ---
