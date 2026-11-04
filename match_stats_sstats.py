@@ -13,8 +13,41 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 TEAM_ID = 6822
 BASE_URL = "https://api.sstats.net"
-# Снова меняем имя файла, чтобы обойти кэш и отправить матч заново
-STATE_FILE = "last_match_id_v4.txt"
+# Меняем имя файла, чтобы обойти кэш
+STATE_FILE = "last_match_id_v5.txt"
+
+# Словарь для перевода названий команд с английского (как отдает API) на русский
+TEAM_TRANSLATIONS = {
+    "Rodina Moskva": "Родина",
+    "FC Krasnodar": "Краснодар",
+    "Akhmat": "Ахмат",
+    "Zenit": "Зенит",
+    "Spartak Moscow": "Спартак",
+    "CSKA Moscow": "ЦСКА",
+    "Dynamo Moscow": "Динамо",
+    "Lokomotiv Moscow": "Локомотив",
+    "Rostov": "Ростов",
+    "Rubin Kazan": "Рубин",
+    "Krylia Sovetov": "Крылья Советов",
+    "Fakel": "Факел",
+    "Baltika": "Балтика",
+    "Pari NN": "Пари НН",
+    "Orenburg": "Оренбург",
+    "Sochi": "Сочи"
+}
+
+def translate_team(name):
+    """Переводит название команды на русский, если оно есть в словаре."""
+    if not name:
+        return "Неизвестно"
+    # Ищем точное совпадение
+    if name in TEAM_TRANSLATIONS:
+        return TEAM_TRANSLATIONS[name]
+    # Если точного нет, ищем частичное (например, если API добавит лишний пробел)
+    for eng, rus in TEAM_TRANSLATIONS.items():
+        if eng.lower() in name.lower():
+            return rus
+    return name
 
 
 def get_last_sent_match_id():
@@ -33,7 +66,6 @@ def save_last_sent_match_id(match_id):
 
 
 def get_last_match_id():
-    """Возвращает ID последнего завершённого матча «Родины»."""
     url = f"{BASE_URL}/Games/list"
     params = {
         "team": TEAM_ID,
@@ -51,21 +83,17 @@ def get_last_match_id():
             print("Завершённых матчей не найдено.")
             return None
         return games[0]["id"]
-    except requests.HTTPError as e:
-        print(f"HTTP-ошибка {e.response.status_code}: {e.response.text}")
-        return None
     except Exception as e:
         print(f"Ошибка при поиске матча: {e}")
         return None
 
 
 def get_next_match():
-    """Возвращает информацию о ближайшем будущем матче «Родины»."""
     url = f"{BASE_URL}/Games/list"
     params = {
         "team": TEAM_ID,
         "upcoming": "true",
-        "order": 1,          # 1 = по возрастанию даты (ближайший матч будет первым)
+        "order": 1,
         "limit": 1,
         "timeZone": 3,
     }
@@ -78,13 +106,10 @@ def get_next_match():
             return None
 
         game = games[0]
-        # В ответе список игр может быть вложен в "game"
         game_info = game.get("game", game)
 
         home = game_info.get("homeTeam", {}).get("name", "Хозяева")
         away = game_info.get("awayTeam", {}).get("name", "Гости")
-        
-        # Ищем дату матча в разных возможных полях
         match_date = game_info.get("date") or game_info.get("startTime") or game_info.get("gameDate")
         
         if not match_date:
@@ -101,20 +126,17 @@ def get_next_match():
 
 
 def get_match_stats(match_id):
-    """Загружает полную статистику матча по его ID."""
     url = f"{BASE_URL}/Games/{match_id}"
     try:
         resp = requests.get(url, timeout=30)
         resp.raise_for_status()
-        data = resp.json()
-        return data
+        return resp.json()
     except Exception as e:
         print(f"Ошибка при загрузке статистики матча: {e}")
         return None
 
 
 def build_message(data):
-    """Формирует сообщение из реальной структуры ответа API."""
     if not data:
         return "Не удалось получить данные о матче."
 
@@ -124,8 +146,12 @@ def build_message(data):
     home_team_obj = game.get("homeTeam") or game.get("home_team") or {}
     away_team_obj = game.get("awayTeam") or game.get("away_team") or {}
 
-    home_team = home_team_obj.get("name", "Хозяева").replace("Rodina Moskva", "Родина")
-    away_team = away_team_obj.get("name", "Гости")
+    # Переводим названия команд
+    raw_home = home_team_obj.get("name", "Хозяева")
+    raw_away = away_team_obj.get("name", "Гости")
+    
+    home_team = translate_team(raw_home)
+    away_team = translate_team(raw_away)
     home_team_id = home_team_obj.get("id")
 
     home_score = game.get("homeFTResult") or game.get("home_ft_result") or game.get("homeScore") or 0
@@ -177,7 +203,8 @@ def build_message(data):
         if red > 0:
             (home_red if is_home else away_red).append(name)
 
-    if "Rodina" in home_team or "Родина" in home_team:
+    # Формируем заголовок
+    if "Родина" in home_team:
         match_title = f"Родина — {away_team}"
     else:
         match_title = f"{home_team} — Родина"
@@ -211,20 +238,20 @@ def build_message(data):
     # --- БЛОК СЛЕДУЮЩЕГО МАТЧА ---
     next_match = get_next_match()
     if next_match:
-        home = next_match["home"].replace("Rodina Moskva", "Родина")
-        away = next_match["away"]
-        if "Rodina" in home or "Родина" in home:
-            next_title = f"Родина — {away}"
+        next_home = translate_team(next_match["home"])
+        next_away = translate_team(next_match["away"])
+        
+        if "Родина" in next_home:
+            next_title = f"Родина — {next_away}"
         else:
-            next_title = f"{home} — Родина"
+            next_title = f"{next_home} — Родина"
 
-        # Парсим дату из ISO формата (например, "2026-11-08T19:00:00Z")
         raw_date = next_match["date"]
         try:
             dt = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
             date_str = dt.strftime("%d.%m.%Y %H:%M")
         except Exception:
-            date_str = raw_date  # если не удалось распарсить, выводим как есть
+            date_str = raw_date
 
         lines.append("")
         lines.append("🗓 *Следующий матч:*")
