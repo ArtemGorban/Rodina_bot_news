@@ -12,7 +12,8 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 RSS_FEED_URL = "https://www.sport-express.ru/services/materials/news/football/se/"
 KEYWORDS = ["родин", "rodina"]
 
-STATE_FILE = "sent_news.json"
+# ВАЖНО: имя файла изменено, чтобы старый «грязный» кэш не подхватился
+STATE_FILE = "sent_news_v2.json"
 
 
 def load_sent_links():
@@ -31,6 +32,7 @@ def save_sent_links(links):
 
 
 def fetch_news():
+    """Скачивает и разбирает RSS-ленту «Спорт-Экспресс»."""
     feed = feedparser.parse(RSS_FEED_URL)
     if feed.bozo and not feed.entries:
         print(f"Ошибка при чтении RSS: {feed.bozo_exception}")
@@ -47,6 +49,7 @@ def fetch_news():
 
 
 def filter_news(items, sent_links):
+    """Фильтрует по ключевым словам и по списку уже отправленных ссылок."""
     result = []
     for item in items:
         haystack = (item["title"] + " " + item["summary"]).lower()
@@ -56,12 +59,18 @@ def filter_news(items, sent_links):
 
 
 async def send_to_telegram(items):
+    """
+    Отправляет новости в Telegram.
+    Возвращает список ссылок, которые РЕАЛЬНО ушли в чат.
+    Если отправка новости упала — её ссылка в результат не попадёт,
+    и при следующем запуске бот попробует снова.
+    """
     if not items:
         print("Новых новостей не найдено.")
-        return
+        return []
 
+    sent = []
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
-    # Важно: закрываем сессию бота после работы
     async with bot:
         for item in items:
             message = (
@@ -76,8 +85,10 @@ async def send_to_telegram(items):
                     disable_web_page_preview=False,
                 )
                 print(f"Отправлено: {item['title']}")
+                sent.append(item["link"])
             except TelegramError as e:
                 print(f"Ошибка Telegram: {e}")
+    return sent
 
 
 def main():
@@ -91,11 +102,10 @@ def main():
     fresh = filter_news(all_news, sent_links)
     print(f"Подходящих новых: {len(fresh)}")
 
-    # Запускаем асинхронную отправку
-    asyncio.run(send_to_telegram(fresh))
+    # Запоминаем ТОЛЬКО реально отправленные ссылки
+    successfully_sent = asyncio.run(send_to_telegram(fresh))
 
-    # Обновляем состояние ТОЛЬКО после реальной отправки
-    sent_links.update(item["link"] for item in fresh)
+    sent_links.update(successfully_sent)
     if len(sent_links) > 5000:
         sent_links = set(sorted(sent_links)[-5000:])
     save_sent_links(sent_links)
