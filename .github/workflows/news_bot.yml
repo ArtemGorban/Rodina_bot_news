@@ -2,9 +2,9 @@ name: Rodina FC Bot
 
 on:
   schedule:
-    - cron: '0 * * * *'      # Каждый час (запуск бота новостей)
-    - cron: '0 20 * * *'     # Каждый день в 20:00 UTC (23:00 МСК) (запуск статистики)
-  workflow_dispatch:          # Ручной запуск для теста (запустит оба скрипта)
+    - cron: '0 * * * *'      
+    - cron: '0 20 * * *'     
+  workflow_dispatch:          
 
 jobs:
   run-bot:
@@ -26,15 +26,14 @@ jobs:
         with:
           path: |
             sent_news_v2.json
-            last_match_id_v2.txt
-          key: bot-state-v3-${{ github.run_id }}
+            last_match_id_v3.txt
+          key: bot-state-v4-${{ github.run_id }}
           restore-keys: |
-            bot-state-v3-
+            bot-state-v4-
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # ЗАПУСК БОТА НОВОСТЕЙ (каждый час или вручную)
       - name: Run News Bot
         if: github.event.schedule == '0 * * * *' || github.event_name == 'workflow_dispatch'
         env:
@@ -42,7 +41,6 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python bot.py
 
-      # ЗАПУСК СТАТИСТИКИ МАТЧА (раз в день или вручную)
       - name: Run Match Stats Bot
         if: github.event.schedule == '0 20 * * *' || github.event_name == 'workflow_dispatch'
         env:
