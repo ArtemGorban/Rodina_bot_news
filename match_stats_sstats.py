@@ -36,7 +36,7 @@ def get_last_match_id():
     params = {
         "team": TEAM_ID,
         "ended": "true",
-        "order": -1,          # ← ИСПРАВЛЕНО: -1 = по убыванию даты
+        "order": -1,
         "limit": 1,
         "timeZone": 3,
     }
@@ -58,6 +58,7 @@ def get_last_match_id():
 
 
 def get_match_stats(match_id):
+    """Загружает полную статистику матча по его ID."""
     url = f"{BASE_URL}/Games/{match_id}"
     try:
         resp = requests.get(url, timeout=30)
@@ -69,15 +70,58 @@ def get_match_stats(match_id):
 
 
 def build_message(data):
+    """Формирует сообщение из реальной структуры ответа API."""
     if not data:
         return "Не удалось получить данные о матче."
 
-    home_team = data.get("homeTeam", {}).get("name", "Хозяева")
-    away_team = data.get("awayTeam", {}).get("name", "Гости")
-    home_score = data.get("homeFTResult", 0)
-    away_score = data.get("awayFTResult", 0)
-    round_name = data.get("roundName", "?")
+    # 1. Основная информация о матче находится внутри data["game"]
+    game = data.get("game", {})
+    home_team = game.get("homeTeam", {}).get("name", "Хозяева")
+    away_team = game.get("awayTeam", {}).get("name", "Гости")
+    home_score = game.get("homeFTResult", 0)
+    away_score = game.get("awayFTResult", 0)
+    round_name = game.get("roundName", "?")
+    home_team_id = game.get("homeTeam", {}).get("id")
 
+    # 2. Создаём словари для сопоставления playerId -> имя и playerId -> teamId
+    lineup_players = data.get("lineupPlayers", [])
+    player_names = {}
+    player_teams = {}
+    for p in lineup_players:
+        pid = p.get("playerId")
+        if pid:
+            player_names[pid] = p.get("playerName", f"Игрок {pid}")
+            player_teams[pid] = p.get("teamId")
+
+    # 3. playerStats — это список объектов
+    player_stats_list = data.get("playerStats", [])
+
+    home_goals, away_goals = [], []
+    home_yellow, away_yellow = [], []
+    home_red, away_red = [], []
+
+    for stats in player_stats_list:
+        player_id = stats.get("playerId")
+        name = player_names.get(player_id, f"Игрок {player_id}")
+        team_id = player_teams.get(player_id)
+        is_home = (team_id == home_team_id)
+
+        # Голы
+        goals = stats.get("goalsTotal") or 0
+        if goals > 0:
+            (home_goals if is_home else away_goals).append(name)
+
+        # Жёлтые карточки
+        yellow = stats.get("cardsYellow") or 0
+        if yellow > 0:
+            (home_yellow if is_home else away_yellow).append(name)
+
+        # Красные карточки
+        red = stats.get("cardsRed") or 0
+        if red > 0:
+            (home_red if is_home else away_red).append(name)
+
+    # 4. Формируем заголовок и счёт
     if "Rodina" in home_team or "Родина" in home_team:
         match_title = f"Родина — {away_team}"
     else:
@@ -90,25 +134,7 @@ def build_message(data):
         "",
     ]
 
-    player_stats = data.get("playerStats", {})
-    home_team_id = data.get("homeTeam", {}).get("id")
-
-    home_goals, away_goals = [], []
-    home_yellow, away_yellow = [], []
-    home_red, away_red = [], []
-
-    for p_id, stats in player_stats.items():
-        name = stats.get("playerName", "Неизвестный")
-        team_id = stats.get("teamId")
-        is_home = (team_id == home_team_id)
-
-        if stats.get("goalsTotal", 0) > 0:
-            (home_goals if is_home else away_goals).append(name)
-        if stats.get("cardsYellow", 0) > 0:
-            (home_yellow if is_home else away_yellow).append(name)
-        if stats.get("cardsRed", 0) > 0:
-            (home_red if is_home else away_red).append(name)
-
+    # 5. Блок голов
     if home_goals or away_goals:
         lines.append("🔹 *Голы:*")
         if home_goals:
@@ -117,6 +143,7 @@ def build_message(data):
             lines.append(f"  {away_team}: {', '.join(away_goals)}")
         lines.append("")
 
+    # 6. Блок карточек
     if home_yellow or away_yellow or home_red or away_red:
         lines.append("🔸 *Карточки:*")
         for name in home_yellow:
