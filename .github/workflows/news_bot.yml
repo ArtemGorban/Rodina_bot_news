@@ -23,7 +23,7 @@ jobs:
       - name: Restore sent news cache
         uses: actions/cache@v4
         with:
-          path: sent_news_v2.json
+          path: sent_news_v3.json
           key: sent-news-v2-${{ github.run_id }}
           restore-keys: |
             sent-news-v2-
