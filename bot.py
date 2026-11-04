@@ -120,7 +120,6 @@ async def send_to_telegram(items):
             caption = (
                 f"<b>{safe_title}</b>\n\n"
                 f"{safe_text}\n\n"
-                f"<a href='{safe_link}'>Читать на Спорт-Экспресс</a>"
             )
 
             delivered = False
