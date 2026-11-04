@@ -26,10 +26,10 @@ jobs:
         with:
           path: |
             sent_news_v2.json
-            last_match_id_v3.txt
-          key: bot-state-v4-${{ github.run_id }}
+            last_match_id_v4.txt
+          key: bot-state-v5-${{ github.run_id }}
           restore-keys: |
-            bot-state-v4-
+            bot-state-v5-
 
       - name: Install dependencies
         run: pip install -r requirements.txt
