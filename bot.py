@@ -1,9 +1,11 @@
 import os
 import json
+import asyncio
 import feedparser
 import telegram
 from telegram.error import TelegramError
 
+# --- КОНФИГУРАЦИЯ ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -53,27 +55,29 @@ def filter_news(items, sent_links):
     return result
 
 
-def send_to_telegram(items):
+async def send_to_telegram(items):
     if not items:
         print("Новых новостей не найдено.")
         return
 
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
-    for item in items:
-        message = (
-            f"📰 Новость о «Родине»\n\n"
-            f"{item['title']}\n\n"
-            f"{item['link']}"
-        )
-        try:
-            bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID,
-                text=message,
-                disable_web_page_preview=False,
+    # Важно: закрываем сессию бота после работы
+    async with bot:
+        for item in items:
+            message = (
+                f"📰 Новость о «Родине»\n\n"
+                f"{item['title']}\n\n"
+                f"{item['link']}"
             )
-            print(f"Отправлено: {item['title']}")
-        except TelegramError as e:
-            print(f"Ошибка Telegram: {e}")
+            try:
+                await bot.send_message(
+                    chat_id=TELEGRAM_CHAT_ID,
+                    text=message,
+                    disable_web_page_preview=False,
+                )
+                print(f"Отправлено: {item['title']}")
+            except TelegramError as e:
+                print(f"Ошибка Telegram: {e}")
 
 
 def main():
@@ -87,8 +91,10 @@ def main():
     fresh = filter_news(all_news, sent_links)
     print(f"Подходящих новых: {len(fresh)}")
 
-    send_to_telegram(fresh)
+    # Запускаем асинхронную отправку
+    asyncio.run(send_to_telegram(fresh))
 
+    # Обновляем состояние ТОЛЬКО после реальной отправки
     sent_links.update(item["link"] for item in fresh)
     if len(sent_links) > 5000:
         sent_links = set(sorted(sent_links)[-5000:])
