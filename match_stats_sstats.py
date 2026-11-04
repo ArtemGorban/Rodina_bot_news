@@ -10,9 +10,24 @@ from telegram.constants import ParseMode
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# ID команды «Родина Москва» на sstats.net (проверено вручную)
 TEAM_ID = 6822
 BASE_URL = "https://api.sstats.net"
+STATE_FILE = "last_match_id.txt"
+
+
+def get_last_sent_match_id():
+    if not os.path.exists(STATE_FILE):
+        return None
+    try:
+        with open(STATE_FILE, "r") as f:
+            return f.read().strip()
+    except Exception:
+        return None
+
+
+def save_last_sent_match_id(match_id):
+    with open(STATE_FILE, "w") as f:
+        f.write(str(match_id))
 
 
 def get_last_match_id():
@@ -21,11 +36,12 @@ def get_last_match_id():
     params = {
         "team": TEAM_ID,
         "ended": "true",
-        "order": "Date DESC",
+        "order": -1,          # ← исправлено: -1 = по убыванию даты
         "limit": 1,
+        "timeZone": 3,        # московское время
     }
     try:
-        resp = requests.get(url, params=params, timeout=20)
+        resp = requests.get(url, params=params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         games = data.get("data", [])
@@ -33,16 +49,18 @@ def get_last_match_id():
             print("Завершённых матчей не найдено.")
             return None
         return games[0]["id"]
+    except requests.HTTPError as e:
+        print(f"HTTP-ошибка {e.response.status_code}: {e.response.text}")
+        return None
     except Exception as e:
         print(f"Ошибка при поиске матча: {e}")
         return None
 
 
 def get_match_stats(match_id):
-    """Загружает статистику матча по его ID."""
     url = f"{BASE_URL}/Games/{match_id}"
     try:
-        resp = requests.get(url, timeout=20)
+        resp = requests.get(url, timeout=30)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -51,19 +69,16 @@ def get_match_stats(match_id):
 
 
 def build_message(data):
-    """Формирует сообщение в заданном формате."""
     if not data:
         return "Не удалось получить данные о матче."
 
-    # 1. Базовая информация
     home_team = data.get("homeTeam", {}).get("name", "Хозяева")
     away_team = data.get("awayTeam", {}).get("name", "Гости")
     home_score = data.get("homeFTResult", 0)
     away_score = data.get("awayFTResult", 0)
     round_name = data.get("roundName", "?")
 
-    # Форматируем заголовок
-    if "Rodina" in home_team:
+    if "Rodina" in home_team or "Родина" in home_team:
         match_title = f"Родина — {away_team}"
     else:
         match_title = f"{home_team} — Родина"
@@ -75,16 +90,12 @@ def build_message(data):
         "",
     ]
 
-    # 2. Извлекаем события из статистики игроков
     player_stats = data.get("playerStats", {})
     home_team_id = data.get("homeTeam", {}).get("id")
 
-    home_goals = []
-    away_goals = []
-    home_yellow = []
-    away_yellow = []
-    home_red = []
-    away_red = []
+    home_goals, away_goals = [], []
+    home_yellow, away_yellow = [], []
+    home_red, away_red = [], []
 
     for p_id, stats in player_stats.items():
         name = stats.get("playerName", "Неизвестный")
@@ -98,7 +109,6 @@ def build_message(data):
         if stats.get("cardsRed", 0) > 0:
             (home_red if is_home else away_red).append(name)
 
-    # 3. Блок голов
     if home_goals or away_goals:
         lines.append("🔹 *Голы:*")
         if home_goals:
@@ -107,7 +117,6 @@ def build_message(data):
             lines.append(f"  {away_team}: {', '.join(away_goals)}")
         lines.append("")
 
-    # 4. Блок карточек (формат: 🟨 Фамилия)
     if home_yellow or away_yellow or home_red or away_red:
         lines.append("🔸 *Карточки:*")
         for name in home_yellow:
@@ -123,9 +132,7 @@ def build_message(data):
 
 
 async def send_to_telegram(text):
-    """Отправляет текст в Telegram с повторами при сетевых сбоях."""
     if not text:
-        print("Нет текста для отправки.")
         return
 
     request = HTTPXRequest(
@@ -135,24 +142,15 @@ async def send_to_telegram(text):
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN, request=request)
 
     try:
-        for attempt in range(3):
-            try:
-                await bot.send_message(
-                    chat_id=TELEGRAM_CHAT_ID,
-                    text=text,
-                    parse_mode=ParseMode.MARKDOWN,
-                    disable_web_page_preview=True,
-                )
-                print("Сообщение отправлено в Telegram.")
-                return
-            except telegram.error.NetworkError as e:
-                print(f"Сетевая ошибка (попытка {attempt + 1}/3): {e}")
-                if attempt < 2:
-                    await asyncio.sleep(5)
-            except TelegramError as e:
-                print(f"Ошибка Telegram: {e}")
-                return
-        print("Не удалось отправить сообщение после 3 попыток.")
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=text,
+            parse_mode=ParseMode.MARKDOWN,
+            disable_web_page_preview=True,
+        )
+        print("Сообщение отправлено в Telegram.")
+    except Exception as e:
+        print(f"Ошибка при отправке: {e}")
     finally:
         try:
             await bot.shutdown()
@@ -161,16 +159,23 @@ async def send_to_telegram(text):
 
 
 def main():
-    print("Поиск последнего матча «Родины»...")
+    last_sent_id = get_last_sent_match_id()
+    print(f"Последний отправленный матч: {last_sent_id}")
+
+    print("Поиск последнего завершённого матча...")
     match_id = get_last_match_id()
+
     if not match_id:
         print("Матч не найден. Выход.")
         return
 
-    print(f"ID матча: {match_id}")
+    if str(match_id) == last_sent_id:
+        print(f"Матч {match_id} уже был отправлен ранее. Пропускаем.")
+        return
 
-    print("Загрузка статистики...")
+    print(f"Новый матч! ID: {match_id}")
     data = get_match_stats(match_id)
+
     if not data:
         print("Не удалось загрузить статистику.")
         return
@@ -182,6 +187,8 @@ def main():
 
     print("Отправка в Telegram...")
     asyncio.run(send_to_telegram(message))
+
+    save_last_sent_match_id(match_id)
 
 
 if __name__ == "__main__":
