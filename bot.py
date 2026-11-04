@@ -4,6 +4,7 @@ import asyncio
 import feedparser
 import telegram
 from telegram.error import TelegramError
+from telegram.request import HTTPXRequest
 
 # --- КОНФИГУРАЦИЯ ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -65,13 +66,16 @@ async def send_to_telegram(items):
         return []
 
     sent = []
-    bot = telegram.Bot(
-        token=TELEGRAM_BOT_TOKEN,
-        read_timeout=30,
-        write_timeout=30,
-        connect_timeout=30,
-        pool_timeout=30,
+
+    # В v22.x таймауты настраиваются через HTTPXRequest
+    request = HTTPXRequest(
+        connect_timeout=30.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=30.0,
     )
+    bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN, request=request)
+
     try:
         for item in items:
             message = (
