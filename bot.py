@@ -1,10 +1,13 @@
 import os
 import json
 import asyncio
+import html
 import feedparser
 import telegram
+from bs4 import BeautifulSoup
 from telegram.error import TelegramError
 from telegram.request import HTTPXRequest
+from telegram.constants import ParseMode
 
 # --- КОНФИГУРАЦИЯ ---
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -41,33 +44,48 @@ def fetch_news():
     for entry in feed.entries:
         title = entry.get("title", "").strip()
         link = entry.get("link", "").strip()
-        summary = entry.get("summary", "")
-        if title and link:
-            items.append({"title": title, "link": link, "summary": summary})
+        summary_html = entry.get("summary", "")
+        
+        if not (title and link):
+            continue
+
+        # --- ИЗВЛЕКАЕМ КАРТИНКУ И ТЕКСТ ИЗ HTML ---
+        soup = BeautifulSoup(summary_html, "html.parser")
+        
+        # Ищем картинку
+        img_tag = soup.find("img")
+        image_url = img_tag.get("src") if img_tag else None
+
+        # Очищаем текст от тегов
+        clean_text = soup.get_text(strip=True)
+        
+        # Убираем лишние пробелы
+        clean_text = " ".join(clean_text.split())
+
+        items.append({
+            "title": title,
+            "link": link,
+            "text": clean_text,
+            "image_url": image_url
+        })
     return items
 
 
 def filter_news(items, sent_links):
     result = []
     for item in items:
-        haystack = (item["title"] + " " + item["summary"]).lower()
+        haystack = (item["title"] + " " + item["text"]).lower()
         if any(kw.lower() in haystack for kw in KEYWORDS) and item["link"] not in sent_links:
             result.append(item)
     return result
 
 
 async def send_to_telegram(items):
-    """
-    Отправляет новости в Telegram с повторами при сетевых сбоях.
-    Возвращает список ссылок, которые РЕАЛЬНО ушли в чат.
-    """
     if not items:
         print("Новых новостей не найдено.")
         return []
 
     sent = []
-
-    # В v22.x таймауты настраиваются через HTTPXRequest
     request = HTTPXRequest(
         connect_timeout=30.0,
         read_timeout=30.0,
@@ -78,23 +96,47 @@ async def send_to_telegram(items):
 
     try:
         for item in items:
-            message = (
-                f"📰 Новость о «Родине»\n\n"
-                f"{item['title']}\n\n"
-                f"{item['link']}"
+            # Экранируем спецсимволы для HTML-разметки, чтобы Telegram не ругался
+            safe_title = html.escape(item["title"])
+            safe_link = html.escape(item["link"])
+            
+            # Telegram имеет лимит на длину подписи к фото — 1024 символа.
+            # Берем первые 800 символов текста, чтобы точно влезть.
+            short_text = item["text"][:800] + "..." if len(item["text"]) > 800 else item["text"]
+            safe_text = html.escape(short_text)
+
+            # Формируем красивую подпись
+            caption = (
+                f"<b>{safe_title}</b>\n\n"
+                f"{safe_text}\n\n"
+                f"<a href='{safe_link}'>Читать на Спорт-Экспресс</a>"
             )
+
             delivered = False
             for attempt in range(3):
                 try:
-                    await bot.send_message(
-                        chat_id=TELEGRAM_CHAT_ID,
-                        text=message,
-                        disable_web_page_preview=False,
-                    )
+                    if item["image_url"]:
+                        # Если картинка есть, отправляем фото с подписью
+                        await bot.send_photo(
+                            chat_id=TELEGRAM_CHAT_ID,
+                            photo=item["image_url"],
+                            caption=caption,
+                            parse_mode=ParseMode.HTML,
+                        )
+                    else:
+                        # Если картинки нет, отправляем просто текст
+                        await bot.send_message(
+                            chat_id=TELEGRAM_CHAT_ID,
+                            text=caption,
+                            parse_mode=ParseMode.HTML,
+                            disable_web_page_preview=False,
+                        )
+                    
                     print(f"Отправлено: {item['title']}")
                     sent.append(item["link"])
                     delivered = True
                     break
+                    
                 except telegram.error.NetworkError as e:
                     print(f"Сетевая ошибка (попытка {attempt + 1}/3): {e}")
                     if attempt < 2:
@@ -102,6 +144,7 @@ async def send_to_telegram(items):
                 except TelegramError as e:
                     print(f"Ошибка Telegram: {e}")
                     break
+                    
             if not delivered:
                 print(f"Не удалось отправить: {item['title']}")
     finally:
