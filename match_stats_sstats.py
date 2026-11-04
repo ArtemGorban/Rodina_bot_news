@@ -1,4 +1,5 @@
 import os
+import json
 import asyncio
 import requests
 import telegram
@@ -36,9 +37,9 @@ def get_last_match_id():
     params = {
         "team": TEAM_ID,
         "ended": "true",
-        "order": -1,          # ← исправлено: -1 = по убыванию даты
+        "order": -1,
         "limit": 1,
-        "timeZone": 3,        # московское время
+        "timeZone": 3,
     }
     try:
         resp = requests.get(url, params=params, timeout=30)
@@ -58,11 +59,20 @@ def get_last_match_id():
 
 
 def get_match_stats(match_id):
+    """Загружает статистику матча по его ID."""
     url = f"{BASE_URL}/Games/{match_id}"
     try:
         resp = requests.get(url, timeout=30)
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        
+        # --- ВРЕМЕННАЯ ОТЛАДКА ---
+        print("=== СЫРЫЕ ДАННЫЕ ОТ API (первые 5000 символов) ===")
+        print(json.dumps(data, indent=2, ensure_ascii=False)[:5000])
+        print("===================================================")
+        # --------------------------
+        
+        return data
     except Exception as e:
         print(f"Ошибка при загрузке статистики матча: {e}")
         return None
