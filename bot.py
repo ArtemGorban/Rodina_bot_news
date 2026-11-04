@@ -2,6 +2,7 @@ import os
 import json
 import asyncio
 import html
+import requests
 import feedparser
 import telegram
 from bs4 import BeautifulSoup
@@ -14,8 +15,9 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 RSS_FEED_URL = "https://www.sport-express.ru/services/materials/news/football/se/"
-KEYWORDS = ["футбол",]
-#["родин", "rodina"]
+# ВАЖНО: не забудьте вернуть сюда "родин", если меняли на "футбол" для теста!
+KEYWORDS = ["родин", "rodina"]
+
 STATE_FILE = "sent_news_v2.json"
 
 
@@ -34,6 +36,21 @@ def save_sent_links(links):
         json.dump(sorted(links), f, ensure_ascii=False, indent=2)
 
 
+def get_og_image(url):
+    """Скачивает страницу новости и ищет картинку в мета-теге og:image."""
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        meta = soup.find("meta", property="og:image")
+        if meta and meta.get("content"):
+            return meta.get("content")
+    except Exception as e:
+        print(f"Не удалось получить картинку с сайта: {e}")
+    return None
+
+
 def fetch_news():
     feed = feedparser.parse(RSS_FEED_URL)
     if feed.bozo and not feed.entries:
@@ -49,17 +66,11 @@ def fetch_news():
         if not (title and link):
             continue
 
-        # --- ИЗВЛЕКАЕМ КАРТИНКУ И ТЕКСТ ИЗ HTML ---
         soup = BeautifulSoup(summary_html, "html.parser")
-        
-        # Ищем картинку
         img_tag = soup.find("img")
         image_url = img_tag.get("src") if img_tag else None
 
-        # Очищаем текст от тегов
         clean_text = soup.get_text(strip=True)
-        
-        # Убираем лишние пробелы
         clean_text = " ".join(clean_text.split())
 
         items.append({
@@ -87,25 +98,25 @@ async def send_to_telegram(items):
 
     sent = []
     request = HTTPXRequest(
-        connect_timeout=30.0,
-        read_timeout=30.0,
-        write_timeout=30.0,
-        pool_timeout=30.0,
+        connect_timeout=30.0, read_timeout=30.0,
+        write_timeout=30.0, pool_timeout=30.0,
     )
     bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN, request=request)
 
     try:
         for item in items:
-            # Экранируем спецсимволы для HTML-разметки, чтобы Telegram не ругался
+            # Если в RSS картинки не было — идем за ней на сайт
+            if not item["image_url"]:
+                print(f"Картинка в RSS не найдена, ищем на сайте: {item['link']}")
+                item["image_url"] = get_og_image(item["link"])
+
             safe_title = html.escape(item["title"])
             safe_link = html.escape(item["link"])
             
-            # Telegram имеет лимит на длину подписи к фото — 1024 символа.
-            # Берем первые 800 символов текста, чтобы точно влезть.
+            # Ограничиваем длину текста (лимит подписи к фото — 1024 символа)
             short_text = item["text"][:800] + "..." if len(item["text"]) > 800 else item["text"]
             safe_text = html.escape(short_text)
 
-            # Формируем красивую подпись
             caption = (
                 f"<b>{safe_title}</b>\n\n"
                 f"{safe_text}\n\n"
@@ -116,7 +127,7 @@ async def send_to_telegram(items):
             for attempt in range(3):
                 try:
                     if item["image_url"]:
-                        # Если картинка есть, отправляем фото с подписью
+                        # Отправляем как ФОТО с подписью
                         await bot.send_photo(
                             chat_id=TELEGRAM_CHAT_ID,
                             photo=item["image_url"],
@@ -124,12 +135,13 @@ async def send_to_telegram(items):
                             parse_mode=ParseMode.HTML,
                         )
                     else:
-                        # Если картинки нет, отправляем просто текст
+                        # Если картинки вообще нигде нет, отправляем текст
+                        # disable_web_page_preview=True скроет тот самый серый блок
                         await bot.send_message(
                             chat_id=TELEGRAM_CHAT_ID,
                             text=caption,
                             parse_mode=ParseMode.HTML,
-                            disable_web_page_preview=False,
+                            disable_web_page_preview=True,
                         )
                     
                     print(f"Отправлено: {item['title']}")
