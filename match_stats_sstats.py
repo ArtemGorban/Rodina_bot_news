@@ -12,7 +12,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 TEAM_ID = 6822
 BASE_URL = "https://api.sstats.net"
-STATE_FILE = "last_match_id.txt"
+STATE_FILE = "last_match_id_v2.txt"  # <-- ИЗМЕНЕНО, чтобы обойти старый кэш
 
 
 def get_last_sent_match_id():
