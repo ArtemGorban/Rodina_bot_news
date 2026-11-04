@@ -14,8 +14,8 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 RSS_FEED_URL = "https://www.sport-express.ru/services/materials/news/football/se/"
-KEYWORDS = ["родин", "rodina"]
-
+KEYWORDS = ["футбол",]
+#["родин", "rodina"]
 STATE_FILE = "sent_news_v2.json"
 
 
