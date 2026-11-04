@@ -1,9 +1,10 @@
-name: Rodina FC News Bot
+name: Rodina FC Bot
 
 on:
   schedule:
-    - cron: '0 * * * *'      # каждый час
-  workflow_dispatch:          # ручной запуск для теста
+    - cron: '0 * * * *'      # Каждый час (запуск бота новостей)
+    - cron: '0 20 * * *'     # Каждый день в 20:00 UTC (23:00 МСК) (запуск статистики)
+  workflow_dispatch:          # Ручной запуск для теста (запустит оба скрипта)
 
 jobs:
   run-bot:
@@ -20,19 +21,31 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Restore sent news cache
+      - name: Restore caches (state files)
         uses: actions/cache@v4
         with:
-          path: sent_news_v2.json
-          key: sent-news-v2-${{ github.run_id }}
+          path: |
+            sent_news_v2.json
+            last_match_id.txt
+          key: bot-state-v2-${{ github.run_id }}
           restore-keys: |
-            sent-news-v2-
+            bot-state-v2-
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run bot
+      # ЗАПУСК БОТА НОВОСТЕЙ (каждый час или вручную)
+      - name: Run News Bot
+        if: github.event.schedule == '0 * * * *' || github.event_name == 'workflow_dispatch'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python bot.py
+
+      # ЗАПУСК СТАТИСТИКИ МАТЧА (раз в день или вручную)
+      - name: Run Match Stats Bot
+        if: github.event.schedule == '0 20 * * *' || github.event_name == 'workflow_dispatch'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python match_stats_sstats.py
