@@ -1,9 +1,6 @@
 import os
-import re
 import json
-import requests
-from urllib.parse import urljoin
-from bs4 import BeautifulSoup
+import feedparser
 import telegram
 from telegram.error import TelegramError
 
@@ -11,15 +8,14 @@ from telegram.error import TelegramError
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-NEWS_URL = "https://www.sovsport.ru/football/10015-rpl/news"
-KEYWORD = "Родина"
+RSS_FEED_URL = "https://www.sport-express.ru/services/materials/news/football/se/"
+KEYWORDS = ["Родина", "Rodina"]
 
-# Файл для хранения уже отправленных ссылок (кэшируется между запусками)
+# Файл для хранения уже отправленных новостей (кэшируется между запусками)
 STATE_FILE = "sent_news.json"
 
 
 def load_sent_links():
-    """Загружает список уже отправленных ссылок из файла."""
     if not os.path.exists(STATE_FILE):
         return set()
     try:
@@ -30,57 +26,38 @@ def load_sent_links():
 
 
 def save_sent_links(links):
-    """Сохраняет обновлённый список ссылок в файл."""
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(sorted(links), f, ensure_ascii=False, indent=2)
 
 
 def fetch_news():
-    """Скачивает страницу и извлекает из неё ссылки на новости."""
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; NewsBot/1.0)"}
-        response = requests.get(NEWS_URL, headers=headers, timeout=20)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-    except requests.RequestException as e:
-        print(f"Ошибка при загрузке страницы: {e}")
+    """Скачивает и разбирает RSS-ленту."""
+    feed = feedparser.parse(RSS_FEED_URL)
+    if feed.bozo and not feed.entries:
+        print(f"Ошибка при чтении RSS: {feed.bozo_exception}")
         return []
 
-    news = {}
-    for a in soup.find_all("a", href=True):
-        title = a.get_text(strip=True)
-        if not title or len(title) < 20:  # отсекаем короткие служебные ссылки
-            continue
-
-        full_url = urljoin(NEWS_URL, a["href"])
-
-        # Отбрасываем всё, что ведёт не на sovsport.ru
-        if "sovsport.ru" not in full_url:
-            continue
-
-        # Отбрасываем теги, авторов, видео, пагинацию и т.п.
-        if any(bad in full_url for bad in ("/tags/", "/authors/", "/forum", "/video", "/photo", "?", "#")):
-            continue
-
-        # Главный фильтр: ссылка на статью должна содержать числовой ID (обычно 4+ цифр)
-        if not re.search(r"/\d{4,}", full_url):
-            continue
-
-        news[full_url] = title
-
-    return [{"title": t, "link": u} for u, t in news.items()]
+    items = []
+    for entry in feed.entries:
+        title = entry.get("title", "").strip()
+        link = entry.get("link", "").strip()
+        summary = entry.get("summary", "")
+        if title and link:
+            items.append({"title": title, "link": link, "summary": summary})
+    return items
 
 
 def filter_news(items, sent_links):
-    """Фильтрует новости по ключевому слову и по списку уже отправленных."""
-    return [
-        item for item in items
-        if KEYWORD.lower() in item["title"].lower() and item["link"] not in sent_links
-    ]
+    """Фильтрует по ключевым словам и по списку уже отправленных."""
+    result = []
+    for item in items:
+        haystack = (item["title"] + " " + item["summary"]).lower()
+        if any(kw.lower() in haystack for kw in KEYWORDS) and item["link"] not in sent_links:
+            result.append(item)
+    return result
 
 
 def send_to_telegram(items):
-    """Отправляет новости в Telegram."""
     if not items:
         print("Новых новостей не найдено.")
         return
@@ -110,7 +87,7 @@ def main():
     print(f"Ранее отправлено ссылок: {len(sent_links)}")
 
     all_news = fetch_news()
-    print(f"Найдено новостей на странице: {len(all_news)}")
+    print(f"Найдено в RSS: {len(all_news)}")
 
     fresh = filter_news(all_news, sent_links)
     print(f"Подходящих новых: {len(fresh)}")
@@ -119,7 +96,6 @@ def main():
 
     # Обновляем состояние
     sent_links.update(item["link"] for item in fresh)
-    # Ограничиваем размер файла — храним последние 5000 ссылок
     if len(sent_links) > 5000:
         sent_links = set(sorted(sent_links)[-5000:])
     save_sent_links(sent_links)
